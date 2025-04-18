@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+
+/src/0_ProjectSetup.R
+/src/0_GISData_format.R

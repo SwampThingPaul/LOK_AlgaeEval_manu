@@ -1,0 +1,35 @@
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# READ ME
+
+Source code and essential data to support Julian et al. (*Submitted*)
+Planning for the future, algae bloom dynamics in water management and
+ecosystem restoration planning efforts.
+
+## Final Structure
+
+`\LOK_AlgaeEval_manu`
+
+- `\Data\`
+  - `dat.csv`
+  - `rsmbn_out.csv`
+  - `LOK.gpkg`
+    - shapefiles created for project that are not readily available via
+      `library(EVERSpatDat)` or other public sources
+  - `LOK_bath.tif`
+    - bathymetry geotiff in feet, NGVD29 from USACE 50ft composite
+      bathymetry data. (originally retrieve from SFWMD GIS)
+- `\src\`
+  - `func.R`
+    - file with custom functions used in the analysis of data
+  - `dat_proc.R`
+    - initial data retrieval processes, where possible, files were saved
+      as csv or other file format
+  - `dat_analyze.R`
+    - code used for analyses presented in manuscript
+- `\Plots\`
+  - Final plots used in manuscript
+- `\_documents\`
+  - place holder *submitted*
+  - place holder *final accepted*
