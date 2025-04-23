@@ -15,16 +15,31 @@ knitr::opts_chunk$set(
 
 Source code and essential data to support Julian et al. (*Submitted*) Planning for the future, algae bloom dynamics in water management and ecosystem restoration planning efforts. 
 
-## Final Structure
+Corresponding Author: Paul Julian (pjulian@evergladesfoundation.org)
+
+## File Structure
 `\LOK_AlgaeEval_manu`
 
 * `\Data\`
-    * `dat.csv`
-    * `rsmbn_out.csv`
     * `LOK.gpkg`
       * shapefiles created for project that are not readily available via `library(EVERSpatDat)` or other public sources
     * `LOK_bath.tif`
       * bathymetry geotiff in feet, NGVD29 from USACE 50ft composite bathymetry data. (originally retrieve from SFWMD GIS) 
+      
+Some files are too large to store on Github, however `dat_proc.R` has the code necessary to download publicly available files or retrieve data from publicly available files. Saved to a local machine, these files include
+
+* `LOK_Q.csv`
+  * Inflow and outflow daily discharge data
+* `LOK_STG.csv`
+  * Daily stage elevation data
+* `LOK_WQ.csv`
+  * Water quality data from SFWMD DBHYDRO for locations within Lake Okeechobee
+* `LOK_WQ_str.csv`
+  * Water quality data from SFWMD DBHYDRO for structure discharge locations specific to Lake Okeechobee
+* `RSMBN_LOK.csv`
+  * RSMBN output data of modeled Lake Okeechobee stage elevation across LOSOM and LOCAR alternatives
+* `RSMBN_LOK_Q.csv`
+  * RSMBN output of modeled structure discharge into and out of Lake Okeechobee across LOSOM and LOCAR alternatives
     
 
 * `\src\`
@@ -33,7 +48,7 @@ Source code and essential data to support Julian et al. (*Submitted*) Planning f
     * `dat_proc.R`
       * initial data retrieval processes, where possible, files were saved as csv or other file format 
     * `dat_analyze.R`
-      * code used for analyses presented in manuscript
+      * code used to read in data, format and perform analyses presented in manuscript
 
 * `\Plots\`
     * Final plots used in manuscript

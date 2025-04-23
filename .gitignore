@@ -6,3 +6,13 @@
 
 /src/0_ProjectSetup.R
 /src/0_GISData_format.R
+
+# Files too large for github, dat_proc.R provides methods to download
+# publicly available data used in the analysis
+
+/Data/LOK_Q.csv
+/Data/LOK_STG.csv
+/Data/LOK_STR_WQ.csv
+/Data/LOK_WQ.csv
+/Data/RSMBN_LOK_Q.csv
+/Data/RSMBN_LOK.csv
