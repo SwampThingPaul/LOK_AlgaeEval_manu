@@ -2,7 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+.Rproj 
 
+LOK_AlgaeEval_manu.Rproj
 
 /src/0_ProjectSetup.R
 /src/0_GISData_format.R
@@ -14,5 +16,7 @@
 /Data/LOK_STG.csv
 /Data/LOK_STR_WQ.csv
 /Data/LOK_WQ.csv
+/Data/LOK_sonde.csv
 /Data/RSMBN_LOK_Q.csv
 /Data/RSMBN_LOK.csv
+/Data/LOK_AlgaeEval_analysis.RData

@@ -288,6 +288,76 @@ if(!any(list.files(data.path) == "LOK_STR_WQ.csv")) {
 }
 
 
+# Sonde Data --------------------------------------------------------------
+sites <- c("L001","L005","L006","LZ40","POLESOUT1","POLESOUT3")
+regions <- c("P","P","P","P","L_N","L_N")
+
+# Define the parameters and corresponding DBKEYs
+params_list <- list(
+  PU    = c("39926", "39890", "39908", "39944", "39962", "39981"),
+  FTURB = c("39922", "39885", "39904", "39940", "39958", "39974"),
+  H2OT  = c("39919", "39881", "39901", "39937", "39955", "39971"),
+  CU    = c("39924", "39888", "39906", "39942", "39960", "39976"),
+  CF    = c("39923", "39886", "39905", "39941", "39959", "39975"),
+  PF    = c("39925", "39889", "39907", "39943", "39961", "39977")
+)
+
+# Assemble into one data frame
+LOK.sonde <- do.call(rbind, lapply(names(params_list), function(param) {
+  data.frame(SITE = sites,
+             DBKEY = params_list[[param]],
+             param = param,
+             Region = regions,
+             stringsAsFactors = FALSE)
+}))
+
+LOK.sonde.meta <- do.call(rbind,lapply(LOK.sonde$DBKEY,function(dbkey){
+  DBHYDRO.meta.byDBKEY(dbkey)
+}))
+
+# Sanity Check
+# tmp=LOK.sonde
+# tmp$STATION=with(tmp,ifelse(substr(SITE,1,1)=="L",paste(SITE,"S",sep="-"),paste0(SITE,"S")))
+# merge(tmp,LOK.sonde.meta[,c("STATION","DBKEY","DATA.TYPE")],
+#       by.x=c("STATION","param"),
+#       by.y=c("STATION","DATA.TYPE"),all.x=T)|>
+#   mutate(DBKEY.test=DBKEY.x==DBKEY.y)
+
+if(!any(list.files(data.path) == "LOK_sonde.csv")) {
+  pb <- txtProgressBar(min = 0, max = length(LOK.sonde$DBKEY), style = 3)
+  
+  PC.dat_list <- lapply(seq_along(LOK.sonde$DBKEY), function(i) {
+    dbkey <- LOK.sonde$DBKEY[i]
+    
+    # Attempt to retrieve data and handle errors
+    result <- tryCatch({
+      tmp <- DBHYDRO_daily(dates2[1], dates2[2], dbkey,v_datum=NA)
+      tmp$DBKEY <- as.character(dbkey)
+      tmp
+    }, error = function(e) {
+      message(sprintf("Skipping DBKEY %s due to error: %s", dbkey, e$message))
+      NULL  # Return NULL if there's an error
+    })
+    
+    # Update the progress bar
+    setTxtProgressBar(pb, i)
+    
+    return(result)
+  })
+  
+  # Close the progress bar
+  close(pb)
+  
+  # Remove NULL values from the list
+  PC.dat_list <- Filter(Negate(is.null), PC.dat_list)
+  
+  # Merge the combined data with the dbkeys data frame
+  PC.dat <- do.call(rbind, PC.dat_list)|>
+    merge(LOK.sonde,"DBKEY")
+  
+  write.csv(PC.dat, paste0(data.path, "LOK_sonde.csv"), row.names = FALSE)
+}
+
 # RSMBN -------------------------------------------------------------------
 ## Preps DSSRip
 # options(dss_override_location="C:\\projects\\dssrip\\monolith")
