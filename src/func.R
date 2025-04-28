@@ -335,3 +335,34 @@ LOOCV_fun <- function(model){
   )
   return(rslt)
 }
+
+
+
+anosim.pw = function(x, grouping,
+                     sim.function = "vegdist",
+                     sim.method = "bray",
+                     p.adjust.m = "bonferroni",
+                     perm = 999){
+  ## adpated from https://github.com/ZhonghuiGai/veganEx/tree/main
+  
+  co <- combn(unique(as.character(grouping)), 2) # pairwise grouping
+  # co = expand.grid(R1 = grouping.val,
+  #                  R2 = grouping.val)
+  # co = co[!(co$R1==co$R2),]
+  
+  n <- ncol(co)
+  pairs <- vector(mode = "numeric", length = n)
+  anosimR <- vector(mode = "numeric", length = n)
+  p.value <- vector(mode = "numeric", length = n)
+  for(i in 1:n){
+    m <- vegan::vegdist(x[grouping %in% co[, i], ], method = sim.method)
+    
+    ano <- vegan::anosim(m, grouping[grouping %in% co[, i]], permutations = perm)
+    pairs[i] <- paste0(co[1,i], ".vs.", co[2,i])
+    anosimR[i] <- ano$statistic
+    p.value[i] <- ano$signif
+  }
+  p.adj <- p.adjust(p.value, method = p.adjust.m)
+  pairw.res <- data.frame(pairs, anosimR, p.value, p.adj)
+  return(pairw.res)
+}

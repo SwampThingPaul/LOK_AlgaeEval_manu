@@ -70,7 +70,13 @@ gpkg_file <- paste0(data.path,"LOK.gpkg")
 st_layers(gpkg_file)$name
 
 lok_zones <- st_read(gpkg_file,"lok_zones")
+LOK_sites_all <- st_read(gpkg_file,"LOK_sites_all")
+AL.hurdat.LOK <- st_read(gpkg_file,"AL.hurdat.LOK")
 
+
+LOK.hur <- st_drop_geometry(AL.hurdat.LOK)|>as.data.frame()
+storm.cat.val <- c("TS",paste0("Cat_",1:5))
+LOK.hur$storm.cat <- storm.cat.val[findInterval(LOK.hur$maxWind,c(0,74,96,111,130,157))]
 ## Reg Schedules/Periods/Seasons -------------------------------------------
 schs.all <- data.frame(
   name = c(
@@ -127,6 +133,9 @@ hydro.sea$hydrosea2[hydro.sea$month %in% 8:10] <- "LateWet"
 hydro.sea$hydrosea2[hydro.sea$month %in% c(11, 12, 1)] <- "EarlyDry"
 hydro.sea$hydrosea2[hydro.sea$month %in% 2:4] <- "LateDry"
 
+WY.periods <- data.frame(WY=seq(WY(dates[1],"Fed"),WY(dates[2],"Fed"),1))
+WY.periods$Hurr <- with(WY.periods,ifelse(WY%in%unique(LOK.hur$WY),1,0))
+WY.periods$maj.Hurr <- with(WY.periods,ifelse(WY%in%unique(subset(LOK.hur,storm.cat!="TS")$WY),1,0))
 
 ## Stage -------------------------------------------------------------------
 comp.dbkey=data.frame(DBKEY=c("06832","00268"),Priority=c("P2","P1"))
@@ -669,7 +678,1012 @@ ggplot() +
         axis.title.x = element_text(margin = margin(t = 8)),
         axis.title.y = element_text(margin = margin(r = 8)))
 
+### ANOSIM ------------------------------------------------------------------
+vars2 <- c("TN", "TP", "DIN", "SRP", "Chla", "TempC", "mean.STG",
+           "M_in.TP", "M_in.TN","WRT.yr","mean.vol.km3","Inflow.TPL.kg","Inflow.TNL.kg")
+ano = anosim(ord.dat[,vars2],
+             grouping = ord.dat$EcoZone3,
+             distance = "kulczynski")
+plot(ano)
+summary(ano)
 
+R.values <- with(ano, data.frame(R = c(statistic, perm) ) )
+R.values$Type <- c("actual", rep("perm", length(R.values$R) - 1))
+plot(density(R.values$R));abline(v=R.values[R.values$Type == "actual" , "R"],col="red")
+
+## Pairwise 
+pwrslt <-  anosim.pw(ord.dat[,vars2],
+                   grouping = ord.dat$EcoZone3,
+                   sim.method = "kulczynski")|>
+  mutate(R1 = factor(sapply(strsplit(pairs,".vs."),"[",1),levels=unique(as.character(ord.dat$EcoZone3))),
+         R2 = factor(sapply(strsplit(pairs,".vs."),"[",2),levels=unique(as.character(ord.dat$EcoZone3))),
+         R_pval = ifelse(round(anosimR,3)==0,
+                         paste0(format(round(anosimR,4),scientific = F),"\n(",ifelse(p.adj<=(0.01),"<0.01",format(p.adj,digits=3)),")"),
+                         paste0(round(anosimR,3),"\n(",ifelse(p.adj<=(0.01),"<0.01",format(p.adj,digits=3)),")"))
+  )
+pwrslt
+pwrslt.long <- rbind(data.frame(R1 ="Global",
+                             R2="Global",
+                             anosimR=ano$statistic,
+                             p.adj=ano$signif),
+                  pwrslt[,c("R1","R2","anosimR","p.adj")])
+
+pwrslt.long|>
+  flextable()|>
+  merge_h()|>
+  colformat_double(j="anosimR",i=~round(anosimR,3)==0,digits=4)|>
+  colformat_double(j="anosimR",i=~round(anosimR,3)!=0,digits=3)|>
+  # colformat_double(j=3,digits=4)|>
+  compose(j="p.adj",i=~p.adj<(0.05),value=as_paragraph("< 0.05"))|>
+  compose(j="p.adj",i=~p.adj<=(0.01),value=as_paragraph("< 0.01"))|>
+  compose(j="p.adj",i=~p.adj>0.05,value=as_paragraph(format(round(p.adj,2),digits=2)))|>
+  italic(j="p.adj",i=~p.adj<0.05)|>bold(j="p.adj",i=~p.adj<0.05)|>
+  flextable::width(width=c(1,1,1,0.75))|>
+  padding(padding=1.25,part="all")|>
+  flextable::align(j=1:4,align="center",part="all")|>
+  set_header_labels(
+    "R1"="Value 1",
+    "R2"="Value 2",
+    "anosimR"="ANOSIM R",
+    "p.adj"="\u03C1-value"
+  )|>
+  font(fontname="Times New Roman",part="all")|>
+  fontsize(size=12,part="all")|>
+  bold(part="header") # |>print("docx")
+
+pwrslt.xtab  <-  pwrslt|>
+  dcast(R1~R2,value.var = "R_pval",fun.aggregate = function(x) x[1])
+colmax <- ifelse(is.na(pwrslt.xtab),"lightgrey",NA)
+
+pwrslt.xtab|>
+  flextable()|>
+  bg(bg=colmax)|>
+  flextable::align(j=2:5,align="center",part="all")|>
+  compose(i=1,j=1,as_paragraph("Nearshore"))|>
+  compose(i=2,j=1,as_paragraph("Pelagic"))|>
+  compose(i=3,j=1,as_paragraph("Littoral North"))|>
+  compose(i=4,j=1,as_paragraph("Littoral South"))|>
+  flextable::width(width=rep(1,5))|>
+  padding(padding=1.25,part="all")|>
+  hline(border=officer::fp_border(color="white"))|>
+  vline(border=officer::fp_border(color="white"))|>
+  set_header_labels(
+    "R1"="",
+    "pelagic"="Pelagic",
+    "Littoral_North"="Littoral North",
+    "Littoral_South"="Littoral South",
+    "Littoral_West"="Littoral West"
+  )
+
+## Chla spatio-temporal GAM ------------------------------------------------
+ctrl = gam.control(trace = T)
+
+WQ.dat.xtab2 <- subset(WQ.dat.xtab,zone!="struct"&CY%in%seq(2008,2023,1)&scrn.val==1)
+WQ.dat.xtab2$decMonth <- dec.month(WQ.dat.xtab2$Date.EST)
+WQ.dat.xtab2$EcoZone3 <- with(WQ.dat.xtab2,as.factor(ifelse(EcoZone2 == "Pelagic_North","pelagic",as.character(EcoZone2))))
+WQ.dat.xtab2$decCY <- lubridate::decimal_date(WQ.dat.xtab2$Date.EST)
+
+yr.k  <-  16
+mon.k <- 50
+utm.k <- 60
+stg.k <- 15
+
+chla.m3<-bam(Chla ~
+               s(STG29,k=15) +
+               s(decMonth,bs="cc",k=mon.k) +
+               s(CY,k=yr.k) +
+               s(UTMX,UTMY,bs="ds",m=c(1,0.5),k=utm.k) + 
+               ti(CY, decMonth,bs=c("tp","cc"),k=c(yr.k,mon.k+20)) +
+               ti(UTMX,UTMY,CY,d=c(2,1),bs=c("ds","tp"),m = list(c(1, 0.5), NA),k=c(utm.k,yr.k)) +
+               ti(UTMX,UTMY,decMonth,d=c(2,1),bs=c("ds","cc"), m = list(c(1, 0.5), NA),k=c(utm.k,mon.k+30)),
+             data=WQ.dat.xtab2,discrete = T,nthreads=c(6,1),
+             family=gaussian(link="log"),
+             control = ctrl)
+
+chla.m3.sum <- summary(chla.m3);
+chla.m3.sum
+
+layout(matrix(1:4,2,2,byrow=T));gam.check(chla.m3,pch=21,col="lightblue",bg="grey")
+dev.off();plot(chla.m3,pages=1)
+
+res  <- recalculateResiduals(simulateResiduals(chla.m3), group = na.omit(WQ.dat.xtab2[,c(names(chla.m3$model),"Date.EST")])$Date.EST)
+testTemporalAutocorrelation(res,time=unique(na.omit(WQ.dat.xtab2[,c(names(chla.m3$model),"Date.EST")])$Date.EST))
+
+range(WQ.dat.xtab2$Chla,na.rm=T); # range of observed values
+range(chla.m3$fitted.values,na.rm=T);# range of predicted (fitted) values
+
+
+# individual term residual check
+pred.org <- (predict(chla.m3,type="terms"))
+chla.m3.partial.resids<-pred.org+residuals(chla.m3)
+ncol(chla.m3.partial.resids)
+layout(matrix(1:8,2:4))
+for(i in 1:ncol(chla.m3.partial.resids)){hist(chla.m3.partial.resids[,i],main=smooths(chla.m3)[i])}  
+
+acf(residuals(chla.m3))
+pacf(residuals(chla.m3))
+
+draw(chla.m3)
+
+### Chla GAM devriative -----------------------------------------------------
+reg.ext <- extent(LOK)
+
+smooths(chla.m3)
+var.vals <- c("stg","decMon","CY","UTM","CYdecMon","CYUTM","decMonUTM")
+chla.m3.stg.d <- dev.data.val(chla.m3,1,n=400,var.names=var.vals)
+chla.m3.CY.d <- dev.data.val(chla.m3,3,n=400,var.names=var.vals)
+chla.m3.decMon.d <- dev.data.val(chla.m3,2,n=400,var.names=var.vals)
+
+range(subset(chla.m3.stg.d, is.na(dsig.incr)==F)$STG29,na.rm=T)
+range(subset(chla.m3.stg.d, is.na(dsig.decr)==F)$STG29,na.rm=T)
+
+## Phyco GAM Data -----------------------------------------------------------
+LOK.PC.sites.coords <- data.frame(
+  SITE = c("POLESOUT1", "POLESOUT3", "L001", "L006", "LZ40", "L005"), 
+  UTMX = c(510009.358377801, 513237.031031199, 520473.178839964, 
+           521579.963180089, 520952.59610862, 502741.140514964),
+  UTMY = c(2989284.20365265, 2985712.5026207, 3001835.22052724, 
+                       2966800.10696748, 2975577.34428215, 2981642.49996558)
+)
+PC.dat.xtab=merge(PC.dat.xtab,LOK.PC.sites.coords,"SITE")
+
+##
+PC.dat.xtab2=subset(PC.dat.xtab,is.na(PU)==F&is.na(Region)==F)
+PC.dat.xtab2$Region.f=as.factor(PC.dat.xtab2$Region)
+PC.dat.xtab2
+
+ggplot(PC.dat.xtab2,aes(x = DOY,y = PU,color = as.factor(WY)))+
+  geom_point()+
+  facet_wrap(~SITE)
+
+dev.off();plot(PU~DOY,PC.dat.xtab2,type="n")
+points(PU~DOY,subset(PC.dat.xtab2,SITE=="L001"&WY==2021),
+       pch=21,bg=ifelse(DOY<20,"red","grey"),cex=1.25)
+points(PU~DOY,subset(PC.dat.xtab2,SITE=="L001"&WY==2021),
+       pch=19,col=ifelse(PU>800,NA,"grey"),cex=1.25)
+
+PC.dat.xtab2[PC.dat.xtab2$SITE=="L001"&PC.dat.xtab2$WY==2021&PC.dat.xtab2$DOY<20,"PU"] <- NA
+
+### PC GAM -----------------------------------------------------------------
+set.seed(123)
+PC.m0 <- bam(PU~
+            s(STG29,bs="tp",k=20)+
+            s(DOY,bs="cc",k=50)+
+            s(UTMY,UTMX,bs="ds",m=c(1,0.5),k=20)+
+            ti(DOY,decCY,k=c(20,10))+
+            s(decCY,k=20)+
+            ti(UTMX,UTMY,decCY,d=c(2,1),bs=c("ds","tp"),m = list(c(1, 0.5), NA),k=c(15,40)),
+          data=PC.dat.xtab2,
+          discrete = T,nthreads=c(10,1),family= tw(),
+          control = ctrl)
+
+layout(matrix(1:4,2,2,byrow=T));gam.check(PC.m0,pch=21,col="lightblue",bg="grey");
+PC.m0.sum <-  summary(PC.m0); 
+PC.m0.sum
+
+dev.off();plot(PC.m0,pages=1)
+
+res  <- recalculateResiduals(simulateResiduals(PC.m0), group = na.omit(WQ.dat.xtab2[,c(names(PC.m0$model),"Date.EST")])$Date.EST)
+testTemporalAutocorrelation(res,time=unique(na.omit(WQ.dat.xtab2[,c(names(PC.m0$model),"Date.EST")])$Date.EST))
+
+range(WQ.dat.xtab2$Chla,na.rm=T); # range of observed values
+range(PC.m0$fitted.values,na.rm=T);# range of predicted (fitted) values
+
+# individual term residual check
+pred.org <- (predict(PC.m0,type="terms"))
+PC.m0.partial.resids<-pred.org+residuals(PC.m0)
+ncol(PC.m0.partial.resids)
+layout(matrix(1:8,2:4))
+for(i in 1:ncol(PC.m0.partial.resids)){hist(PC.m0.partial.resids[,i],main=smooths(PC.m0)[i])}  
+
+acf(residuals(PC.m0))
+pacf(residuals(PC.m0))
+
+draw(PC.m0)
+
+### PC Derivative analysis -----------------------------------------------------
+
+dev.vars <- c("stg","DOY","UTM","decCY_DOY","decCY","UTM_decCY")
+PC.m.stg.d <- dev.data.val(PC.m0,1,n=400,var.names=dev.vars)
+PC.m.DOY.d <- dev.data.val(PC.m0,2,n=400,var.names=dev.vars)
+PC.m.decCY.d <- dev.data.val(PC.m0,5,n=400,var.names=dev.vars)
+
+## Interogating the results
+pracma::findpeaks(PC.m.DOY.d$fit.DOY)
+as.Date(212,origin=as.Date("2023-01-01"))
+as.Date(mean(c(335,367)),origin=as.Date("2023-01-01"))
+
+range(PC.m.decCY.d$dsig.incr,na.rm=T)
+range(subset(PC.m.decCY.d,is.na(dsig.incr)==F)$decCY,na.rm=T)|>
+  lubridate::date_decimal()
+
+dec.events <-  with(PC.m.stg.d,rle(ifelse(is.na(dsig.decr)==T,0,1)))
+events <-  rep(dec.events$values==1,dec.events$lengths)
+PC.m.stg.d[events,]
+
+PC.m.stg.d$event_id <-  rep(seq_along(dec.events$values),dec.events$lengths)
+tmp  <-  ddply(PC.m.stg.d,"event_id",summarise,
+            N.decline = N.obs(dsig.decr),
+            min.val = min(STG29,na.rm=T),
+            max.val = max(STG29,na.rm=T),
+            min.fit = min(dsig.decr,na.rm=T),
+            max.fit = max(dsig.decr,na.rm=T))
+
+plot(min.val~event_id,tmp)
+points(max.val~event_id,tmp)
+
+### Chla & PC Response curves ---------------------------------------------------------
+## Average response curves for chlorophyll and Phycocyanin models
+## curve that limits the time frame consistent with Chla 
+smooths(chla.m3)
+crit.t <- qt(0.025, df.residual(chla.m3), lower.tail = FALSE)
+chla.stg.pdat <- expand.grid(
+  STG29=seq(chla.m3$var.summary$STG29[1],chla.m3$var.summary$STG29[3],length.out = 100),
+  decMonth=chla.m3$var.summary$decMonth[2],
+  CY=chla.m3$var.summary$CY[2],
+  UTMX=chla.m3$var.summary$UTMX[2],
+  UTMY=chla.m3$var.summary$UTMY[2]
+)
+Chl.stg.resp.dat <- predict(chla.m3,chla.stg.pdat,type="response",se=T)|>
+  mutate(
+    resp.UCI=(fit+(crit.t*se.fit)),
+    resp.LCI=(fit-(crit.t*se.fit)),
+    fit=(fit)
+  )|>
+  as.data.frame()
+chla.stg.pdat <- cbind(chla.stg.pdat,Chl.stg.resp.dat)
+
+crit.t <- qt(0.025, df.residual(PC.m0), lower.tail = FALSE)
+PC.stg.pdat <- expand.grid(
+  STG29=seq(PC.m0$var.summary$STG29[1],PC.m0$var.summary$STG29[3],length.out = 100),
+  DOY=PC.m0$var.summary$DOY[2],
+  UTMX=PC.m0$var.summary$UTMX[2],
+  UTMY=PC.m0$var.summary$UTMY[2],
+  decCY = PC.m0$var.summary$decCY[2]
+)
+PC.stg.resp.dat <- predict(PC.m0,PC.stg.pdat,type="response",se=T)|>
+  mutate(
+    resp.UCI=(fit+(crit.t*se.fit)),
+    resp.LCI=(fit-(crit.t*se.fit)),
+    fit=(fit)
+  )|>
+  as.data.frame()
+PC.stg.pdat=cbind(PC.stg.pdat,PC.stg.resp.dat)
+
+
+## Frequency Analysis - Mixed Models Approach (LMM) --------------------------
+## see Walker (2020) for more information - https://swampthingecology.org/LOK_AlgaeEval/LOK_AlgaeEvalTool.html
+
+lok.stg.sea.mean2 <- ddply(lok.stg,c("WY","Season"),summarise,
+                        mean.STG=mean(STG29,na.rm=T),
+                        mean.recess=mean(recess_30day,na.rm=T),
+                        mean.delta.min=mean(delta.min.stg,na.rm=T),
+                        N.val=N.obs(STG29))
+
+monCY.flow <- ddply(flow.mon.sum,c("CY","month","WY"),summarise,
+                    inflow.Q=sum(cfs.to.km3d(Inflow),na.rm=T),
+                    outflow.Q=sum(cfs.to.km3d(Outflow),na.rm=T))
+monCY.flow$Qin.3mon.sum <- zoo::rollapply(monCY.flow$inflow.Q,
+                                          3,sum,na.rm=T,align="right",fill=NA)
+monCY.flow$Qin.6mon.sum <- zoo::rollapply(monCY.flow$inflow.Q,
+                                          6,sum,na.rm=T,align="right",fill=NA)
+monCY.flow$Qin.12mon.sum <- zoo::rollapply(monCY.flow$inflow.Q,
+                                           12,sum,na.rm=T,align="right",fill=NA)
+monCY.flow <- merge(monCY.flow,month.season,"month",all.x=T,sort=FALSE)
+monCY.flow <- monCY.flow[order(monCY.flow$CY,monCY.flow$month),]
+
+lok.q.sea.mean2 <- ddply(monCY.flow,c("WY","Season"),summarise,
+                      mean.Qin=mean(inflow.Q,na.rm=T),
+                      total.Qin=sum(inflow.Q,na.rm=T),
+                      mean.3m.sum=mean(Qin.3mon.sum,na.rm=T),
+                      mean.6m.sum=mean(Qin.6mon.sum,na.rm=T),
+                      mean.12m.sum=mean(Qin.12mon.sum,na.rm=T))
+
+site.sea.mean <- ddply(subset(WQ.dat.xtab,!(Station.ID%in%structure.sites)),
+                    c("Station.ID","Season","EcoZone3","WY","UTMX","UTMY"),
+                    summarise,
+                    # N.sites = N.obs(unique(Station.ID)),
+                    N.Chla.vals = N.obs(Chla),
+                    mean.val = mean(Chla,na.rm=T),
+                    DIN = mean(DIN,na.rm=T),
+                    SRP = mean(SRP,na.rm=T),
+                    Temp = mean(TempC,na.rm=T),
+                    f20 = sum(Chla>20,na.rm=T),
+                    NB20 = N.Chla.vals-f20,
+                    f40 = sum(Chla>40,na.rm=T),
+                    NB40 = N.Chla.vals-f40)
+site.sea.mean.sum <- ddply(site.sea.mean,c("Season","EcoZone3","WY"),summarise,
+                          N.vals = N.obs(mean.val),
+                          mean.val = mean(mean.val,na.rm=T),
+                          mean.f20 = mean(f20/N.Chla.vals,na.rm=T),
+                          mean.f40 = mean(f40/N.Chla.vals,na.rm=T),
+                          sum.f20 = sum(f20,na.rm=T),
+                          sum.NB20 = sum(NB20,na.rm=T),
+                          sum.f40 = sum(f40,na.rm=T),
+                          sum.NB40 = sum(NB40,na.rm=T),
+                          Tcount.Chla = sum(N.Chla.vals),
+                          mean.DIN = mean(DIN,na.rm=T),
+                          mean.SRP = mean(SRP, na.rm=T),
+                          mean.Temp = mean(Temp,na.rm=T))
+
+melt(site.sea.mean.sum[,c("WY","Season","EcoZone3","mean.val","mean.f20","mean.f40")],
+     id.vars = c("WY","Season","EcoZone3"))|>
+  merge(data.frame(variable =c("mean.val","mean.f20","mean.f40"),
+                    param = c("Chl-a (ug/L)","f20 (prop)","f40 (prop)")))|>
+  subset(Season=="Summer")|>
+  ggplot(aes(x=WY,y=value,color=EcoZone3))+
+  geom_point(shape=19)+
+  geom_line(linewidth = 0.75)+
+  facet_wrap(param~EcoZone3,nrow=3,scales="free_y")
+
+
+### Seasonal mods (site season stats)-----------------------------------------
+WY.vals.scn <- seq(2000,2023,1)[!(seq(2000,2023,1)%in%subset(WY.periods,maj.Hurr==1)$WY)]
+
+site.sea.mean.sum <- site.sea.mean.sum|>
+  merge(lok.stg.sea.mean2,c("WY","Season"))|>
+  merge(lok.q.sea.mean2,c("WY","Season"))
+
+site.sea.mean.sum.su <-  subset(site.sea.mean.sum,Season=="Summer"&WY%in%WY.vals.scn)|>
+  mutate(EcoZone3.f=as.factor(EcoZone3))
+### Mean Chlorophyll --------------------------------------------------------
+mod_site.seamean1.stg <- gam(mean.val ~ mean.delta.min  +
+                               s(EcoZone3.f,bs="re")+
+                               s(EcoZone3.f,mean.delta.min,bs="re"),
+                             data = site.sea.mean.sum.su,method = 'REML',family=tw())
+stg.chl.me <-  summary(mod_site.seamean1.stg)
+stg.chl.me
+
+gratia::variance_comp(mod_site.seamean1.stg); 
+gammit::extract_fixed(mod_site.seamean1.stg)
+
+coef(mod_site.seamean1.stg)
+# SE sqrt(diag(vcov(mod_site.seamean1.stg)))
+layout(matrix(1:4,2,2));gam.check(mod_site.seamean1.stg,pch=21,col="lightblue",bg="grey")
+dev.off();testResiduals(simulateResiduals(mod_site.seamean1.stg))
+
+stg.mod.fe  <-  gam(mean.val ~ mean.delta.min,
+                 data = site.sea.mean.sum.su,method = 'REML',family=tw())
+summary(stg.mod.fe)
+
+#### Cross Validation --------------------------------------------------------
+# k-fold approach
+
+set.seed(83)
+nfolds = 5
+case.folds = rep(1:nfolds, length.out = nrow(site.sea.mean.sum.su)) # divide the cases as evenly as possible
+case.folds <- sample(case.folds) # randomly permute the order
+# bandwidths <- (1:5)/10 # Evenly space bandwidths from 0.1 to 0.5 (only for npreg in example)
+kfold.result=data.frame()
+for(fold in 1:nfolds){
+  train  <-  site.sea.mean.sum.su[case.folds!=fold,]
+  test <- site.sea.mean.sum.su[case.folds==fold,]
+  # Fit training
+  mod <- gam(mean.val ~ mean.delta.min  +
+              s(EcoZone3.f,bs="re")+
+              s(EcoZone3.f,mean.delta.min,bs="re"),
+            data = train,method = 'REML',family=tw())
+  sum.mod <- summary(mod)
+  devexpl <- sum.mod$dev.expl
+  disp <- sum.mod$dispersion
+  
+  pred <- predict(mod, newdata = test)
+  eval <- model_fit_params2(test$mean.val,exp(pred))
+  eval <- cbind(eval,data.frame(test.N = N.obs(test$mean.val),
+                              train.N=N.obs(train$mean.val),
+                              mod.devexpl = devexpl, mod.disp = disp,fold=fold))
+  kfold.result <- rbind(kfold.result,eval)
+}
+kfold.result
+
+apply(kfold.result,2,mean)
+
+### f20  --------------------------------------------------------------------
+site.sea.mean.sum.su$tot.f20 <- with(site.sea.mean.sum.su,sum.f20/Tcount.Chla)
+
+f20.mod.fe <- gam(cbind(sum.f20,sum.NB20) ~ mean.delta.min,
+                 data = site.sea.mean.sum.su,method = 'REML',family=binomial(link = "logit"))
+summary(f20.mod.fe)
+
+mod_site.sea.f20 <- gam(cbind(sum.f20,sum.NB20) ~ mean.delta.min +
+                          s(EcoZone3.f,bs="re")+
+                          s(EcoZone3.f,mean.delta.min,bs="re"),
+                        data = site.sea.mean.sum.su,method = 'REML',family= binomial(link = "logit"))
+f20.chl.me <- summary(mod_site.sea.f20);
+f20.chl.me
+gratia::variance_comp(mod_site.sea.f20); 
+
+layout(matrix(1:4,2,2));gam.check(mod_site.sea.f20,pch=21,col="lightblue",bg="grey")
+dev.off();testResiduals(simulateResiduals(mod_site.sea.f20))
+
+set.seed(83)
+nfolds = 5
+case.folds <- rep(1:nfolds, length.out = nrow(site.sea.mean.sum.su)) # divide the cases as evenly as possible
+case.folds <- sample(case.folds) # randomly permute the order
+kfold.f20.result=data.frame()
+for(fold in 1:nfolds){
+  train <- site.sea.mean.sum.su[case.folds!=fold,]
+  test <- site.sea.mean.sum.su[case.folds==fold,]
+  # Fit training
+  mod <- gam(cbind(sum.f20,sum.NB20) ~ mean.delta.min +
+              s(EcoZone3.f,bs="re")+
+              s(EcoZone3.f,mean.delta.min,bs="re"),
+            data = train,method = 'REML',family= binomial(link = "logit"))
+  sum.mod <- summary(mod)
+  devexpl <- sum.mod$dev.expl
+  disp <- sum.mod$dispersion
+  
+  pred <- predict(mod, newdata = test ,type="response")
+  eval <- model_fit_params2(test$tot.f20,pred)
+  eval <- cbind(eval,data.frame(test.N = N.obs(test$sum.f20),
+                              train.N=N.obs(train$sum.f20),
+                              mod.devexpl = devexpl, mod.disp = disp,fold=fold))
+  kfold.f20.result <- rbind(kfold.f20.result,eval)
+}
+kfold.f20.result
+apply(kfold.f20.result,2,mean)
+
+#### f40  --------------------------------------------------------------------
+site.sea.mean.sum.su$tot.f40 <-  with(site.sea.mean.sum.su,sum.f40/Tcount.Chla)
+
+f40.mod.fe <-  gam(cbind(sum.f40,sum.NB40) ~ mean.delta.min ,
+                 data = site.sea.mean.sum.su,method = 'REML',family=binomial(link = "logit"))
+summary(f40.mod.fe)
+
+mod_site.sea.f40 <- gam(cbind(sum.f40,sum.NB40) ~ mean.delta.min +
+                          s(EcoZone3.f,bs="re")+
+                          s(EcoZone3.f,mean.delta.min,bs="re"),
+                        data = site.sea.mean.sum.su,method = 'REML',family= binomial(link = "logit"))
+f40.chl.me <-  summary(mod_site.sea.f40);f40.chl.me
+gratia::variance_comp(mod_site.sea.f40); 
+
+dev.off();testResiduals(simulateResiduals(mod_site.sea.f40,refit=T));# dispersion test good
+dev.off();testResiduals(simulateResiduals(mod_site.sea.f40,refit=F));# dispersion test p<0.05 (higher dispersion rate?)
+
+set.seed(83)
+nfolds  <-  5
+case.folds  <-  rep(1:nfolds, length.out = nrow(site.sea.mean.sum.su)) # divide the cases as evenly as possible
+case.folds <- sample(case.folds) # randomly permute the order
+kfold.f40.result=data.frame()
+for(fold in 1:nfolds){
+  train <-  site.sea.mean.sum.su[case.folds!=fold,]
+  test <-  site.sea.mean.sum.su[case.folds==fold,]
+  # Fit training
+  mod <-  gam(cbind(sum.f40,sum.NB40) ~ mean.delta.min +
+              s(EcoZone3.f,bs="re")+
+              s(EcoZone3.f,mean.delta.min,bs="re"),
+            data = train,method = 'REML',family= binomial(link = "logit"))
+  sum.mod  <-  summary(mod)
+  devexpl <-  sum.mod$dev.expl
+  disp <-  sum.mod$dispersion
+  
+  pred  <-  predict(mod, newdata = test,type="response")
+  eval  <-  model_fit_params2(test$tot.f40,pred)
+  eval <- cbind(eval,data.frame(test.N = N.obs(test$sum.f40),
+                              train.N=N.obs(train$sum.f40),
+                              mod.devexpl = devexpl, mod.disp = disp,fold=fold))
+  kfold.f40.result  <- rbind(kfold.f40.result,eval)
+}
+kfold.f40.result
+apply(kfold.f40.result,2,mean)
+
+## WRT - Chla analysis -----------------------------------------------------
+idvars <- c("Station.ID", "WY", "Date.EST", "EcoZone3", 
+            "CY", "month", "hydro.season", "scrn.val")
+val.vars <- c("TKN", "NH4", "NOx", "TN", "TP", "SRP", "Chla", "TempC", "SD", "DIN") 
+idvars[!(idvars%in%names(WQ.dat.xtab))]; #double check varables are in data.frame name
+val.vars[!(val.vars%in%names(WQ.dat.xtab))]; #double check varables are in data.frame name
+lake.wq.melt <- melt(WQ.dat.xtab[,c(idvars,val.vars)],id.vars=idvars)
+lake.wq.melt <- merge(lake.wq.melt,
+                      month.season,
+                      "month")
+
+lake.wq.melt.site <- subset(lake.wq.melt,scrn.val==1)|>
+  ddply(c("Station.ID", "WY","EcoZone3", "CY", "month","Season","variable"),
+        summarise,mean.val = mean(value,na.rm=T))
+
+flow.TP.sea.mean <- melt(flow.TP.mon.CY,id.vars = c("CY","month","WY","Date.monCY"))|>
+  merge(month.season,"month")|>
+  dcast(WY+Season~variable,value.var="value",mean,na.rm=T)
+
+lake.wq.mon.xtab2 <- dcast(lake.wq.melt.site,EcoZone3+WY+Season~variable,
+                           value.var = "mean.val",mean,na.rm=T)|>
+  merge(flow.TP.sea.mean,c("WY","Season"))
+lake.wq.mon.xtab2$EcoZone3.f <- as.factor(lake.wq.mon.xtab2$EcoZone3)
+
+ggplot(lake.wq.mon.xtab2,aes(x=WY,y=Chla,color=EcoZone3))+
+  geom_point()+
+  geom_smooth(method='loess')+
+  scale_y_continuous(trans = scales::log_trans(),breaks=c(1,10,100,500),labels=scales::comma) +
+  facet_wrap(EcoZone3~Season,nrow=5)
+
+## LOK HABAM ---------------------------------------------------------------
+# Summer Only Model
+WYs.val <- seq(2000,2023,1)
+WYs.val <-WYs.val[!(WYs.val%in%subset(WY.periods,maj.Hurr==1)$WY)]
+test.WYs.val <- seq(1977,1999,1)
+test.WYs.val <-test.WYs.val[!(test.WYs.val%in%subset(WY.periods,maj.Hurr==1)$WY)]
+
+wq.hydro.sum.mean <- subset(lake.wq.mon.xtab2,WY%in%WYs.val&Season=="Summer")
+wq.hydro.sum.mean.test <- subset(lake.wq.mon.xtab2,WY%in%test.WYs.val&Season=="Summer")
+
+vars <- c("Chla","TP","DIN", "EcoZone3.f","mean.depth.m","Inflow.Q.m3","mean.vol.km3","WRT.yr")
+
+### Chla --------------------------------------------------------------------
+Chla_HGAM_mod_sum.null <- gam(Chla~1, data = wq.hydro.sum.mean,family=tw(),method="REML")
+
+Chla_HGAM_mod_sum3 <- gam(Chla ~ WRT.yr + TP + DIN + 
+                            ti(TP,DIN,by=EcoZone3.f,k=6)+
+                            s(mean.depth.m,k=19,by=EcoZone3.f)+
+                            s(Inflow.Q.m3,bs="cc",k=12)+
+                            s(EcoZone3.f, bs = "re"), 
+                          data = wq.hydro.sum.mean,method="GCV.Cp",
+                          family= tw())
+Chla_HGAM_mod_sum3 |> AIC()
+Chla_HGAM_mod_sum3 |> summary()
+Chla_HGAM_mod_sum3 |> plot(pages=1)
+layout(matrix(1:4,2,2));gam.check(Chla_HGAM_mod_sum3,pch=21,bg="grey");abline(0,1,col="Red")
+testResiduals(simulateResiduals(Chla_HGAM_mod_sum3))
+LOOCV_fun(Chla_HGAM_mod_sum3); plot(pred~actual,LOOCV_fun(Chla_HGAM_mod_sum3));abline(0,1,col="red")
+
+Chla.mod.test <- predict(Chla_HGAM_mod_sum3,wq.hydro.sum.mean.test,type="response")
+plot(wq.hydro.sum.mean.test$Chla~Chla.mod.test);abline(0,1,col="red")
+model_fit_params(wq.hydro.sum.mean.test$Chla,Chla.mod.test)
+
+
+### TP Model ----------------------------------------------------------------
+TP_HGAM_mod_sum2 <- gam(TP ~ 
+                          s(mean.vol.km3,by=EcoZone3.f,k=10,bs=c("tp"))+
+                          s(Outflow.Q.m3,k=10) +
+                          s(EcoZone3.f, bs = "re"), 
+                        data = wq.hydro.sum.mean,method="GCV.Cp",
+                        family= tw())#
+summary(TP_HGAM_mod_sum2)
+LOOCV_fun(TP_HGAM_mod_sum2); plot(pred~actual,LOOCV_fun(TP_HGAM_mod_sum2));abline(0,1,col="red")
+
+summary(TP_HGAM_mod_sum2)
+plot(TP_HGAM_mod_sum2,page=1)
+layout(matrix(1:4,2,2));gam.check(TP_HGAM_mod_sum2,pch=21,bg="grey");abline(0,1,col="red")
+testResiduals(simulateResiduals(TP_HGAM_mod_sum2))
+
+TP.mod.test <- predict(TP_HGAM_mod_sum2,wq.hydro.sum.mean.test,type="response")
+plot(wq.hydro.sum.mean.test$TP~TP.mod.test);abline(0,1)
+model_fit_params(wq.hydro.sum.mean.test$TP,TP.mod.test)
+
+
+### DIN Model ---------------------------------------------------------------
+DIN.gam.fam2 <- tw() # Gamma(link="log") #   
+DIN_HGAM_mod_sum2 <- gam(DIN ~ Outflow.Q.m3 + mean.vol.km3 +
+                           s(WRT.yr,by=EcoZone3.f,k=10)+
+                           # s(mean.depth.m,bs="cc",k=19)+
+                           # s(mean.vol.km3,by=EcoZone3.f,k=10)+
+                           s(EcoZone3.f, bs = "re"), 
+                         data = wq.hydro.sum.mean,method="GCV.Cp", #"REML"
+                         family=DIN.gam.fam2)
+summary(DIN_HGAM_mod_sum2)
+LOOCV_fun(DIN_HGAM_mod_sum2); plot(pred~actual,LOOCV_fun(DIN_HGAM_mod_sum2));abline(0,1,col="red")
+
+concurvity(DIN_HGAM_mod_sum2)
+plot(DIN_HGAM_mod_sum2,page=1)
+layout(matrix(1:4,2,2));gam.check(DIN_HGAM_mod_sum2,pch=21,bg="grey");abline(0,1,col="red")
+testResiduals(simulateResiduals(DIN_HGAM_mod_sum2))
+
+DIN.mod.test <- predict(DIN_HGAM_mod_sum2,wq.hydro.sum.mean.test,type="response")
+plot(wq.hydro.sum.mean.test$DIN~DIN.mod.test);abline(0,1)
+model_fit_params(wq.hydro.sum.mean.test$DIN,DIN.mod.test)
+
+### LOOCV -------------------------------------------------------------------
+# Leave-One-Out Cross-Validation
+
+Chla_HGAM3.LOOCV <- LOOCV_fun(Chla_HGAM_mod_sum3)
+Chla_HGAM3.LOOCV
+plot(Chla_HGAM3.LOOCV$actual, Chla_HGAM3.LOOCV$pred);abline(0,1,col="red")
+
+TP_HGAM2.LOOCV <- LOOCV_fun(TP_HGAM_mod_sum2)
+TP_HGAM2.LOOCV
+plot(TP_HGAM2.LOOCV$actual, TP_HGAM2.LOOCV$pred);abline(0,1,col="red")
+
+DIN_HGAM2.LOOCV <- LOOCV_fun(DIN_HGAM_mod_sum2);DIN_HGAM2.LOOCV
+plot(DIN_HGAM2.LOOCV$actual, DIN_HGAM2.LOOCV$pred);abline(0,1,col="red")
+
+### TSI exploration ---------------------------------------------------------
+lake.wq.mon.xtab2$TSI_TP <- with(lake.wq.mon.xtab2,14.42*log(TP*1000)+4.14)
+lake.wq.mon.xtab2$TSI_TN <- with(lake.wq.mon.xtab2,54.45+14.43*log(TN))
+lake.wq.mon.xtab2$TSI_SD <- with(lake.wq.mon.xtab2,60-14.41*log(SD))
+lake.wq.mon.xtab2$TSI_Chla <- with(lake.wq.mon.xtab2,9.81*log(Chla+30.6))
+
+lake.wq.mon.xtab2$TSI_TNTP_diff <- with(lake.wq.mon.xtab2,TSI_TN-TSI_TP)
+lake.wq.mon.xtab2$TSI_ChlTP_diff <- with(lake.wq.mon.xtab2,TSI_Chla-TSI_TP)
+lake.wq.mon.xtab2$TSI_ChlSD_diff <- with(lake.wq.mon.xtab2,TSI_Chla-TSI_SD)
+head(lake.wq.mon.xtab2)
+
+ggplot(subset(lake.wq.mon.xtab2,Season=="Summer"),
+       aes(x=WY,y=TSI_TNTP_diff,color=EcoZone3.f))+
+  geom_line()+
+  geom_hline(yintercept=0,color="red")+
+  labs(y=expression("TSI"[" TN"] * " - TSI"[" TP"]),
+       subtitle = "Summer mean values",
+       title = "Lake Okeechobee Ecological Zones",
+       color="Zones")+
+  facet_wrap(~EcoZone3.f)
+
+
+## RSM Data ----------------------------------------------------------------
+LOSOM.alts  <-  c("NA25f","PA25")
+LOCAR.alts <-  c("PA_FWOLL","LCR1","ECB23L")
+
+### Data aggregation and calcs ----------------------------------------------
+min.stg <- 11.5
+all.alts <- c(LOSOM.alts,LOCAR.alts)
+
+LOK.RSM.stg <- read.csv(paste0(data.path,"RSMBN_LOK.csv"))|>
+  mutate(Date=date.fun(Date),
+         CY=as.numeric(format(Date,"%Y")),
+         month=as.numeric(format(Date,"%m")),
+         DOY=as.numeric(format(Date,"%j")),
+         WY=WY(Date,"Fed"),
+         FLWY=WY(Date),
+         hydro.season=FL.Hydroseason(Date),
+         delta.min.stg=pmax(STAGE-min.stg,0,na.rm=T),
+         Alt = factor(Alt,levels=all.alts),
+         STAGE.m = ft.to.m(STAGE),
+         volume.acft = get_LOK_volume(STAGE),
+         area.acres = get_LOK_area(STAGE),
+         depth = get_LOK_depth(STAGE))
+
+LOK.RSM.stg <-  LOK.RSM.stg[order(LOK.RSM.stg$Date,LOK.RSM.stg$Alt),]
+
+RSM.mon.vol <- ddply(LOK.RSM.stg,c("Alt","CY","month","WY"),summarise,
+                  mean.vol.km3=mean(acft.to.m3(volume.acft)/1e9,na.rm=T),
+                  mean.area.km2=mean(acres.to.m2(area.acres)/1e6,na.rm=T),
+                  mean.depth.m = mean(ft.to.m(depth),na.rm=T),
+                  mean.STG = mean(STAGE,na.rm=T))
+RSM.mon.vol$Date.monCY <- with(RSM.mon.vol,date.fun(paste(CY,month,"01",sep="-")))
+
+vars = c("Date.monCY","Alt", "mean.vol.km3", "mean.area.km2","mean.depth.m", "mean.STG" )
+melt(RSM.mon.vol[,vars],id.vars = vars[1:2])|>
+  ggplot(aes(x=Date.monCY,y=value,color=Alt))+
+  geom_line(linewidth = 0.75)+
+  facet_wrap(~variable,scales = "free_y",ncol=1)+
+  labs(
+    x = "Date",
+    y = "Value"
+  ) +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),  # Customize panel labels
+    legend.position = "bottom"  # Adjust legend position
+  )
+
+
+### RSM Inflow/Outflow  
+## LOSOM
+Q.inflow.sites <- c('S65E','FEC','TOTAL_ISTOK','S77BF','S4BP','S3','S2',
+                    'C12ABP','C12BP',"C10BP",'C4ABP','S236','P5WPS','S308BF',
+                    'TCNSQ','S154','S135'); 
+Q.outflow.sites <-c('NELKSH_WS_QWS','NLKSH_WS_QWS','S77','S4_WS','S271','C12A','C12','C10',
+                    'S352',"S351",'C4A','C3','S354','BRIGHTON_WS','S308')
+
+## LOCAR - adjusted for changes in Indian Prairie Basin Refinement
+Q.inflow.sites <- c(Q.inflow.sites,"S84","C40C41LSCOUT")
+Q.outflow.sites <-c(Q.outflow.sites,'G207G208')
+
+LOK.wb.sites <- rbind(
+  data.frame(SITE = Q.inflow.sites,dir = "inflow"),
+  data.frame(SITE = Q.outflow.sites,dir = "outflow")
+)
+
+LOK.RSMBN.Q <- read.csv(paste0(data.path,"RSMBN_LOK_Q.csv"))
+LOK.RSMBN.Q <- LOK.RSMBN.Q|>
+  mutate(Date=date.fun(Date),
+         CY=as.numeric(format(Date,"%Y")),
+         month=as.numeric(format(Date,"%m")),
+         DOY=as.numeric(format(Date,"%j")),
+         WY=WY(Date,"Fed"),
+         FLWY=WY(Date),
+         hydro.season=FL.Hydroseason(Date),
+         Alt = factor(Alt,levels=all.alts))|>
+  merge(month.season,"month")
+
+unique(LOK.RSMBN.Q$proj)
+unique(LOK.RSMBN.Q$Alt)
+
+RSM.mon.Q <- dcast(LOK.RSMBN.Q,CY+month+WY+Alt~dir,value.var = "FLOW",
+                   fun.aggregate = function(x) sum(cfs.to.m3d(x),na.rm=T))
+RSM.mon.Q$Date.monCY <- with(RSM.mon.Q,date.fun(paste(CY,month,"01",sep="-")))
+
+names(RSM.mon.Q)
+
+RSM.Qdat.names <- names(RSM.mon.Q)# c(names(RSM.mon.Q)[!(names(RSM.mon.Q)%in%c("inflow","outflow"))],paste(c("Inflow","Outflow"),"Q.m3",sep="."))
+RSM.Qdat.names <- gsub("inflow","Inflow.Q.m3",RSM.Qdat.names)
+RSM.Qdat.names <- gsub("outflow","Outflow.Q.m3",RSM.Qdat.names)
+colnames(RSM.mon.Q) <- RSM.Qdat.names
+head(RSM.mon.Q)
+
+RSM.mon.Q.vol <- merge(RSM.mon.Q,RSM.mon.vol,c("CY", "month","WY","Date.monCY",'Alt'),all.x=T)|>
+  mutate(WRT.yr = mean.vol.km3/(Outflow.Q.m3/1e9)/12)|>
+  merge(month.season,"month",all.x=T)
+unique(lake.wq.mon.xtab2$EcoZone3.f)
+
+### Stage Duration Curves ---------------------------------------------------
+compare <- function(x, y) {
+  n <- length(x); m <- length(y)
+  w <- c(x, y)
+  o <- order(w)
+  z <- cumsum(ifelse(o <= n, m, -n))
+  i <- which.max(abs(z))
+  w[o[i]]
+}
+
+NA25.ecdf.dat  <-  ecdf_fun(subset(LOK.RSM.stg,Alt==all.alts[1])$STAGE.m)|>mutate(proportion = 1-proportion)
+PA25.ecdf.dat <-  ecdf_fun(subset(LOK.RSM.stg,Alt==all.alts[2])$STAGE.m)|>mutate(proportion = 1-proportion)
+FWOLL.ecdf.dat <-  ecdf_fun(subset(LOK.RSM.stg,Alt==all.alts[3])$STAGE.m)|>mutate(proportion = 1-proportion)
+LCR1.ecdf.dat <-  ecdf_fun(subset(LOK.RSM.stg,Alt==all.alts[4])$STAGE.m)|>mutate(proportion = 1-proportion)
+
+LOSOM.comp  <- compare(subset(LOK.RSM.stg,Alt==all.alts[1])$STAGE.m,
+                     subset(LOK.RSM.stg,Alt==all.alts[2])$STAGE.m)
+LOCAR.comp  <- compare(subset(LOK.RSM.stg,Alt==all.alts[3])$STAGE.m,
+                     subset(LOK.RSM.stg,Alt==all.alts[4])$STAGE.m)
+
+den.NA25 <- density(x = subset(LOK.RSM.stg,Alt==all.alts[1])$STAGE.m)
+den.PA25 <- density(x = subset(LOK.RSM.stg,Alt==all.alts[2])$STAGE.m)
+den.FWOLL <- density(x = subset(LOK.RSM.stg,Alt==all.alts[3])$STAGE.m)
+den.LCR1 <- density(x = subset(LOK.RSM.stg,Alt==all.alts[4])$STAGE.m)
+
+
+LOK.RSM.stg.sea <- ddply(LOK.RSM.stg,c("WY","Season","Alt","proj"),summarise,
+                      mean.STG=mean(STAGE,na.rm=T),
+                      mean.delta.min=mean(delta.min.stg,na.rm=T),
+                      median.STG=median(STAGE,na.rm=T),
+                      median.delta.min=median(delta.min.stg,na.rm=T),
+                      N.val=N.obs(STAGE))|>
+  mutate(Alt=factor(Alt,levels = c(LOSOM.alts,LOCAR.alts)),
+         proj = as.factor(proj))
+
+LOK.RSM.stg.sea.su <-  subset(LOK.RSM.stg.sea,Season == "Summer")
+
+### LMM Model predictions -------------------------------------------------------
+exp.dat  <-  expand.grid(
+  WY = unique(LOK.RSM.stg.sea.su$WY),
+  Alt = unique(LOK.RSM.stg.sea.su$Alt),
+  EcoZone3.f = as.factor(c("Littoral_North", "Littoral_South", "Littoral_West", "nearshore", "pelagic"))
+)
+LOK.RSM.stg.sea.su  <-  merge(LOK.RSM.stg.sea.su,exp.dat,c("WY","Alt"))          
+LOK.RSM.stg.sea.su<- LOK.RSM.stg.sea.su[order(LOK.RSM.stg.sea.su$Alt,LOK.RSM.stg.sea.su$EcoZone3.f,LOK.RSM.stg.sea.su$WY),]
+
+LOK.RSM.stg.sea.su.pred<- LOK.RSM.stg.sea.su|>
+  mutate(
+    chla = exp(predict(mod_site.seamean1.stg,newdata = LOK.RSM.stg.sea.su)),
+    f20 = predict(mod_site.sea.f20,newdata = LOK.RSM.stg.sea.su,type="response"),
+    f40 = predict(mod_site.sea.f40,newdata = LOK.RSM.stg.sea.su,type="response"),
+    chla.fxf = exp(predict(mod_site.seamean1.stg,newdata = LOK.RSM.stg.sea.su,
+                           exclude=c("s(EcoZone3.f)", "s(EcoZone3.f,mean.delta.min)"))),
+    f20.fxf = predict(mod_site.sea.f20,newdata = LOK.RSM.stg.sea.su,type="response",
+                      exclude=c("s(EcoZone3.f)", "s(EcoZone3.f,mean.delta.min)")),
+    f40.fxf = predict(mod_site.sea.f40,newdata = LOK.RSM.stg.sea.su,type="response",
+                      exclude=c("s(EcoZone3.f)", "s(EcoZone3.f,mean.delta.min)")),
+    Alt = factor(Alt, levels= c("NA25f", "PA25", "PA_FWOLL", "LCR1")) 
+  )
+
+fxf.vals  <-  ddply(LOK.RSM.stg.sea.su.pred,c("WY","Alt"),summarise,
+                 chla.fxf = mean(chla.fxf),
+                 f20.fxf = mean(f20.fxf),
+                 f40.fxf = mean(f40.fxf))
+
+range(LOK.RSM.stg.sea.su.pred$chla)
+range(fxf.vals$chla.fxf)
+
+range(LOK.RSM.stg.sea.su.pred$f20)
+range(fxf.vals$f20.fxf)
+
+range(LOK.RSM.stg.sea.su.pred$f40)
+range(fxf.vals$f40.fxf)
+
+
+### Comparisons -------------------------------------------------------------
+alt.combo <- combn(all.alts, 2)
+wc.pairwise.chla <- data.frame()
+for(i in 1:ncol(alt.combo)){
+  tmp <- wilcox.test(chla.fxf~Alt,
+                    # alternative ="greater",
+                    subset(fxf.vals,Alt%in%alt.combo[,i]),
+                    paired = T)
+  
+  rslt <- data.frame(alt1 = alt.combo[1,i], alt2 = alt.combo[2,i],
+                    comparison = paste(alt.combo[1,i],alt.combo[2,i],sep="-"),
+                    stat = as.numeric(tmp$statistic),
+                    pval = as.numeric(tmp$p.value)
+  )
+  wc.pairwise.chla <- rbind(wc.pairwise.chla,rslt)
+}
+wc.pairwise.chla$pval.adj <- p.adjust(wc.pairwise.chla$pval,"holm",n=6)
+wc.pairwise.chla$param <- "chla"
+wc.pairwise.chla_lts <- rcompanion::cldList(pval.adj ~ comparison,data=wc.pairwise.chla,threshold = 0.05)
+
+
+wc.pairwise.f20 <- data.frame()
+for(i in 1:ncol(alt.combo)){
+  tmp <- wilcox.test(f20.fxf~Alt,
+                    subset(fxf.vals,Alt%in%alt.combo[,i]),
+                    paired = T)
+  
+  rslt <- data.frame(alt1 = alt.combo[1,i], alt2 = alt.combo[2,i],
+                    comparison = paste(alt.combo[1,i],alt.combo[2,i],sep="-"),
+                    stat = as.numeric(tmp$statistic),
+                    pval = as.numeric(tmp$p.value)
+  )
+  wc.pairwise.f20 <- rbind(wc.pairwise.f20,rslt)
+}
+wc.pairwise.f20$pval.adj <- p.adjust(wc.pairwise.f20$pval,"holm",n=6)
+wc.pairwise.f20$param <- "f20"
+wc.pairwise.f20_lts <- rcompanion::cldList(pval.adj ~ comparison,data=wc.pairwise.f20,threshold = 0.05)
+
+wc.pairwise.f40 <- data.frame()
+for(i in 1:ncol(alt.combo)){
+  tmp <- wilcox.test(f40.fxf~Alt,
+                    subset(fxf.vals,Alt%in%alt.combo[,i]),
+                    paired = T)
+  
+  rslt <- data.frame(alt1 = alt.combo[1,i], alt2 = alt.combo[2,i],
+                    comparison = paste(alt.combo[1,i],alt.combo[2,i],sep="-"),
+                    stat = as.numeric(tmp$statistic),
+                    pval = as.numeric(tmp$p.value)
+  )
+  wc.pairwise.f40 <- rbind(wc.pairwise.f40,rslt)
+}
+wc.pairwise.f40$pval.adj <- p.adjust(wc.pairwise.f40$pval,"holm",n=6)
+wc.pairwise.f40$param <- "f40"
+wc.pairwise.f40_lts <- rcompanion::cldList(pval.adj ~ comparison,data=wc.pairwise.f40,threshold = 0.05)
+
+## Percent Difference
+perdiff.dat = rbind(
+  dcast(LOK.RSM.stg.sea.su.pred,EcoZone3.f~Alt,value.var = "chla",mean)|>
+    mutate(param = "chla"),
+  dcast(LOK.RSM.stg.sea.su.pred,EcoZone3.f~Alt,value.var = "f20",mean)|>
+    mutate(param = "f20"),
+  dcast(LOK.RSM.stg.sea.su.pred,EcoZone3.f~Alt,value.var = "f40",mean)|>
+    mutate(param = "f40")
+)|>
+  mutate(PerDiff_NA25PA25 =((PA25-NA25f)/NA25f)*100,
+         PerDiff_PA25FWOLL =((PA_FWOLL-PA25)/PA25)*100,
+         PerDiff_FWOLLLCR1 =((LCR1-PA_FWOLL)/PA_FWOLL)*100,
+         PerDiff_PA25LCR1 =((LCR1-PA25)/LCR1)*100)
+
+### BGChem Models (LOK HABAM) -------------------------------------------------
+
+# Calculate summer mean values
+vars <- c("month", "CY", "WY", "Date.monCY", "Season", "Alt", "Inflow.Q.m3", "Outflow.Q.m3", 
+          "mean.vol.km3", "mean.area.km2", "mean.depth.m", "mean.STG", 
+          "WRT.yr")
+RSM.sum.Q.vol <- melt(subset(RSM.mon.Q.vol,Season=="Summer")[,vars],id.vars = vars[1:6])|>
+  dcast(WY+Season+Alt~variable,
+        value.var = "value",mean,na.rm=T)
+
+eco.region.ls <- c("Littoral_North", "Littoral_South", "Littoral_West", "nearshore", "pelagic")
+RSM.sum.Q.vol <- lapply(eco.region.ls,function(var){
+  RSM.sum.Q.vol$EcoZone3.f <- var
+  RSM.sum.Q.vol
+})
+head(RSM.sum.Q.vol)
+RSM.sum.Q.vol <- do.call(rbind,RSM.sum.Q.vol)
+RSM.sum.Q.vol$EcoZone3.f <- as.factor(RSM.sum.Q.vol$EcoZone3.f)
+RSM.sum.Q.vol$Alt <- factor(RSM.sum.Q.vol$Alt,levels=c("NA25f","PA25","PA_FWOLL","LCR1"))
+
+RSM.sum.Q.vol2 <- RSM.sum.Q.vol; # "clean" version for later
+
+# TP 
+TP.rsm.pred <- predict(TP_HGAM_mod_sum2,newdata=RSM.sum.Q.vol,type="response",se.fit=T)
+RSM.sum.Q.vol$TP.fit.pred <- TP.rsm.pred$fit|>as.numeric()
+RSM.sum.Q.vol$TP.fit.se <- TP.rsm.pred$se.fit|>as.numeric()
+
+# DIN
+DIN.rsm.pred <- predict(DIN_HGAM_mod_sum2,newdata=RSM.sum.Q.vol,type="response",se.fit=T)
+RSM.sum.Q.vol$DIN.fit.pred <- DIN.rsm.pred$fit|>as.numeric()
+RSM.sum.Q.vol$DIN.fit.se <- DIN.rsm.pred$se.fit|>as.numeric()
+
+# Chla
+Chla.rsm.pred <- predict(Chla_HGAM_mod_sum3,newdata=RSM.sum.Q.vol,type="response",se.fit=T)
+RSM.sum.Q.vol$Chla.fit.pred <- RSM.sum.Q.vol$Chla <- Chla.rsm.pred$fit|>as.numeric()
+RSM.sum.Q.vol$Chla.fit.se <- Chla.rsm.pred$se.fit|>as.numeric()
+
+### WQ Scenario results --------------------------------------------------------
+RSM.sum.Q.vol2.FWOLL <- subset(RSM.sum.Q.vol2,Alt=="PA_FWOLL") 
+
+TP.rsm.pred <- predict(TP_HGAM_mod_sum2,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$TP.fit.pred <- TP.rsm.pred$fit|>as.numeric()
+
+DIN.rsm.pred <- predict(DIN_HGAM_mod_sum2,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$DIN.fit.pred <- DIN.rsm.pred$fit|>as.numeric()
+
+# Base
+RSM.sum.Q.vol2.FWOLL$TP <- RSM.sum.Q.vol2.FWOLL$TP.fit.pred
+RSM.sum.Q.vol2.FWOLL$DIN <- RSM.sum.Q.vol2.FWOLL$DIN.fit.pred
+
+Chla.rsm.pred <- predict(Chla_HGAM_mod_sum3,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$Chla.fit.pred <- Chla.rsm.pred$fit|>as.numeric()
+
+# tmp <- aggregate(Chla.fit.pred~EcoZone3.f,RSM.sum.Q.vol2.FWOLL,mean,na.rm=T)|>
+#   mutate(scenario="base")
+
+tmp <- ddply(RSM.sum.Q.vol2.FWOLL,c("EcoZone3.f"),summarise,
+             mean.val = mean(Chla.fit.pred,na.rm=T),
+             SE.val = SE(Chla.fit.pred))|>
+  mutate(scenario="base")
+
+# P10_N10
+RSM.sum.Q.vol2.FWOLL$TP <- RSM.sum.Q.vol2.FWOLL$TP.fit.pred*0.9
+RSM.sum.Q.vol2.FWOLL$DIN <- RSM.sum.Q.vol2.FWOLL$DIN.fit.pred*0.9
+
+Chla.rsm.pred2 <- predict(Chla_HGAM_mod_sum3,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$Chla.fit.pred <- Chla.rsm.pred2$fit|>as.numeric()
+
+tmp <- rbind(tmp,
+             ddply(RSM.sum.Q.vol2.FWOLL,c("EcoZone3.f"),summarise,
+                   mean.val = mean(Chla.fit.pred,na.rm=T),
+                   SE.val = SE(Chla.fit.pred))|>
+               mutate(scenario="P10_N10")
+)
+
+# P20_N10
+RSM.sum.Q.vol2.FWOLL$TP <- RSM.sum.Q.vol2.FWOLL$TP.fit.pred*0.8
+RSM.sum.Q.vol2.FWOLL$DIN <- RSM.sum.Q.vol2.FWOLL$DIN.fit.pred*0.9
+
+Chla.rsm.pred2 <- predict(Chla_HGAM_mod_sum3,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$Chla.fit.pred <- Chla.rsm.pred2$fit|>as.numeric()
+
+tmp <- rbind(tmp,
+             ddply(RSM.sum.Q.vol2.FWOLL,c("EcoZone3.f"),summarise,
+                   mean.val = mean(Chla.fit.pred,na.rm=T),
+                   SE.val = SE(Chla.fit.pred))|>
+               mutate(scenario="P20_N10")
+)
+
+# P10_N20
+RSM.sum.Q.vol2.FWOLL$TP <- RSM.sum.Q.vol2.FWOLL$TP.fit.pred*0.9
+RSM.sum.Q.vol2.FWOLL$DIN <- RSM.sum.Q.vol2.FWOLL$DIN.fit.pred*0.8
+
+Chla.rsm.pred2 <- predict(Chla_HGAM_mod_sum3,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$Chla.fit.pred <- Chla.rsm.pred2$fit|>as.numeric()
+
+tmp <- rbind(tmp,
+             ddply(RSM.sum.Q.vol2.FWOLL,c("EcoZone3.f"),summarise,
+                   mean.val = mean(Chla.fit.pred,na.rm=T),
+                   SE.val = SE(Chla.fit.pred))|>
+               mutate(scenario="P10_N20")
+)
+
+# P30_N30
+RSM.sum.Q.vol2.FWOLL$TP <- RSM.sum.Q.vol2.FWOLL$TP.fit.pred*0.7
+RSM.sum.Q.vol2.FWOLL$DIN <- RSM.sum.Q.vol2.FWOLL$DIN.fit.pred*0.7
+
+Chla.rsm.pred2 <- predict(Chla_HGAM_mod_sum3,newdata=RSM.sum.Q.vol2.FWOLL,type="response",se.fit=T)
+RSM.sum.Q.vol2.FWOLL$Chla.fit.pred <- Chla.rsm.pred2$fit|>as.numeric()
+
+tmp <- rbind(tmp,
+             ddply(RSM.sum.Q.vol2.FWOLL,c("EcoZone3.f"),summarise,
+                   mean.val = mean(Chla.fit.pred,na.rm=T),
+                   SE.val = SE(Chla.fit.pred))|>
+               mutate(scenario="P30_N30")
+)
+
+tmp$scenario <- factor(tmp$scenario,levels=c("base", "P10_N10", "P20_N10", "P10_N20", "P30_N30"))
+
+ggplot(tmp,aes(x=scenario,y=mean.val,fill=scenario))+
+  geom_bar(stat = "identity")+
+  geom_text(aes(label = format(round(mean.val,1))),vjust = -1.5)+
+  geom_errorbar(aes(ymin = mean.val - SE.val,ymax = mean.val+SE.val),
+                width = 0.2,color="black")+
+  scale_fill_manual(values = wesanderson::wes_palette("Zissou1",5,"continuous")) +
+  facet_wrap(~EcoZone3.f)+
+  ylim(c(0,35))+
+  labs(title = "Alternative: FWOLL (LOSOM + EAA Res)",
+       subtitle = "POS Mean \u00B1 SE",
+       y = expression("Chl-a ("*mu*"g L"^" -1"*")"),
+       x = "Scenarios")
+
+HABAM_WQScenario <- tmp
+HABAM_WQScenario$scenario <- factor(HABAM_WQScenario$scenario,
+                                    levels =  c("base", "P10_N10", "P20_N10", 
+                                                "P10_N20","P30_N30"))
 
 # END ---------------------------------------------------------------------
 # save.image(file=paste0(data.path,"LOK_AlgaeEval_analysis.RData"))
