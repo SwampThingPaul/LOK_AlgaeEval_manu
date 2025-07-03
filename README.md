@@ -3,9 +3,12 @@
 
 # READ ME
 
-Source code and essential data to support Julian et al. (*Submitted*)
-Planning for the future, algae bloom dynamics in water management and
-ecosystem restoration efforts.
+Source code and essential data to support Julian et al. (2025).
+
+- Julian P, Walker BW, Surratt D, Davis SE (2025) Planning for the
+  future, algae bloom dynamics in water management and ecosystem
+  restoration efforts. Frontiers in Water. doi:
+  10.3389/frwa.2025.1619838
 
 Corresponding Author: Paul Julian (<pjulian@evergladesfoundation.org>)
 
@@ -68,5 +71,6 @@ local drive:
 
 ### `\_documents\`
 
-- place holder *submitted*
+<!-- * place holder *submitted* -->
+
 - place holder *final accepted*
